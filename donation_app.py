@@ -141,5 +141,39 @@ def save_to_sheet(name, amount):
     # 시트에 행 추가
     sheet.append_row([timestamp, name, amount, total])
 
+import os
+import json
+
+# GitHub Actions 환경에서 JSON 키를 문자열로 가져와 파일로 저장
+gcp_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+
+with open("gcp_key.json", "w") as f:
+    f.write(gcp_json)
+
+# 환경변수로 인증 파일 경로 설정
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp_key.json"
+
+import os
+import json
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+# GitHub Secrets에서 가져오기
+creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+creds_dict = json.loads(creds_json)
+
+scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+gc = gspread.authorize(credentials)
+sheet = gc.open_by_key("your_google_sheet_id").sheet1
+
+# 예시 - 시트에 기록
+sheet.append_row([timestamp, name, donation, total])
+
+
+
+
+
+
 
 

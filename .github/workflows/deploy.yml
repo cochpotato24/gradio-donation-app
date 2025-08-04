@@ -7,7 +7,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     env:
       GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
 
@@ -27,8 +26,10 @@ jobs:
 
       - name: Save GCP credentials to file
         run: |
-          echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > gcp_key.json
+          echo "${GOOGLE_APPLICATION_CREDENTIALS_JSON}" > gcp_key.json
           echo "GOOGLE_APPLICATION_CREDENTIALS=gcp_key.json" >> $GITHUB_ENV
 
       - name: Run Gradio App
         run: python donation_app.py
+
+

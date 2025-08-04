@@ -1,0 +1,11 @@
+[core]
+	repositoryformatversion = 0
+	filemode = false
+	bare = true
+	symlinks = false
+	ignorecase = true
+[remote "origin"]
+	url = D:/게임피드백/gradio_donation_app
+	tagOpt = --no-tags
+	fetch = +refs/*:refs/*
+	mirror = true
