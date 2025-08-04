@@ -2,6 +2,9 @@ import gradio as gr
 import pandas as pd
 from datetime import datetime
 import os
+import gspread
+from google.oauth2.service_account import Credentials
+
 
 CSV_FILE = "donation_log.csv"
 
@@ -9,6 +12,17 @@ if os.path.exists(CSV_FILE):
     log_df = pd.read_csv(CSV_FILE)
 else:
     log_df = pd.DataFrame(columns=["이름", "기부액", "수익", "누적수익", "응답시간"])
+
+# ✅ 이 아래에 Google Sheets 연동 코드 삽입!
+scope = ["https://spreadsheets.google.com/feeds",
+         "https://www.googleapis.com/auth/spreadsheets",
+         "https://www.googleapis.com/auth/drive.file",
+         "https://www.googleapis.com/auth/drive"]
+
+creds = Credentials.from_service_account_file("service_account.json", scopes=scope)
+client = gspread.authorize(creds)
+sheet = client.open("donation_log").sheet1
+
 
 def donation_app(name, donation):
     global log_df
@@ -32,6 +46,11 @@ def donation_app(name, donation):
     }])
     log_df = pd.concat([log_df, new_row], ignore_index=True)
     log_df.to_csv(CSV_FILE, index=False, encoding='utf-8-sig')
+# ✅ Google Sheets에도 저장
+try:
+    sheet.append_row([name, donation, income, new_total, time_now])
+except Exception as e:
+    print("❌ Google Sheets 저장 실패:", e)
 
     return f"💰 {name}님, 이번 수익은 {income}만원이며, 누적 수익은 {new_total}만원입니다."
 
@@ -185,7 +204,37 @@ sheet = client.open("donation_log").sheet1
 # 응답 기록 예시
 sheet.append_row([timestamp, name, donation, total])
 
+import gspread
+from google.oauth2.service_account import Credentials
 
+# Google Sheets 인증 설정
+scope = ["https://spreadsheets.google.com/feeds",
+         "https://www.googleapis.com/auth/spreadsheets",
+         "https://www.googleapis.com/auth/drive.file",
+         "https://www.googleapis.com/auth/drive"]
+
+creds = Credentials.from_service_account_file("gcp_key.json", scopes=scope)
+client = gspread.authorize(creds)
+
+# 시트 열기 (시트 이름이 정확히 일치해야 함)
+sheet = client.open("donation_log").sheet1
+
+
+def record_donation(name, amount, comment):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # CSV 저장
+    with open(CSV_FILE, mode="a", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow([timestamp, name, amount, comment])
+
+    # ✅ Google Sheets에도 저장
+    try:
+        sheet.append_row([timestamp, name, amount, comment])
+    except Exception as e:
+        print("Google Sheets 저장 실패:", e)
+
+    return f"감사합니다, {name}님! {amount}원을 기부해주셨습니다."
 import os
 print("현재 경로 파일 목록:", os.listdir())
 print("gcp_key.json 존재 여부:", os.path.exists("gcp_key.json"))
