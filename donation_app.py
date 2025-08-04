@@ -170,6 +170,22 @@ sheet = gc.open_by_key("your_google_sheet_id").sheet1
 # 예시 - 시트에 기록
 sheet.append_row([timestamp, name, donation, total])
 
+import gspread
+from google.oauth2.service_account import Credentials
+
+# Google Sheets 인증
+scope = ["https://spreadsheets.google.com/feeds",'https://www.googleapis.com/auth/spreadsheets',
+         "https://www.googleapis.com/auth/drive.file","https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_file("gcp_key.json", scopes=scope)
+client = gspread.authorize(creds)
+
+# 시트 열기
+sheet = client.open("donation_log").sheet1
+
+# 응답 기록 예시
+sheet.append_row([timestamp, name, donation, total])
+
+
 
 
 
