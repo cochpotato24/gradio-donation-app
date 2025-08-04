@@ -14,7 +14,8 @@ if os.path.exists(CSV_FILE):
 else:
     log_df = pd.DataFrame(columns=["이름", "기부액", "수익", "누적수익", "응답시간"])
 
-# ✅ Google Sheets 인증 (한 번만 설정)
+import jason 
+# ✅ Google Sheets 인증 (Render 환경 변수 사용)
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/spreadsheets",
@@ -22,9 +23,13 @@ scope = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-creds = Credentials.from_service_account_file("service_account.json", scopes=scope)
+# 환경 변수로부터 JSON 인증 정보 읽기
+creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+creds_dict = json.loads(creds_json)
+
+creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
 client = gspread.authorize(creds)
-sheet = client.open("donation_log").sheet1  # ✅ 시트 이름 정확히 일치해야 함
+sheet = client.open("donation_log").sheet1  # ✅ Google Sheet 문서명 정확히 일치해야 함
 
 # ✅ Gradio 입력 처리 함수
 def donation_app(name, donation):
