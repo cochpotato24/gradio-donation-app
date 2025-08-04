@@ -1,0 +1,8 @@
+# 캐시 파일 무시
+__pycache__/
+*.pyc
+
+# 필수 JSON 키파일은 무시하지 않음!
+# *.json ← 이 줄을 절대 넣지 마세요.
+applied-grove-468001-s2-2613434aac1b.json
+applied-grove-*.json
