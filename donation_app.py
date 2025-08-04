@@ -14,7 +14,7 @@ if os.path.exists(CSV_FILE):
 else:
     log_df = pd.DataFrame(columns=["이름", "기부액", "수익", "누적수익", "응답시간"])
 
-import jason 
+import json 
 # ✅ Google Sheets 인증 (Render 환경 변수 사용)
 scope = [
     "https://spreadsheets.google.com/feeds",
