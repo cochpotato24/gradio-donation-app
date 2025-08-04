@@ -186,6 +186,11 @@ sheet = client.open("donation_log").sheet1
 sheet.append_row([timestamp, name, donation, total])
 
 
+import os
+print("현재 경로 파일 목록:", os.listdir())
+print("gcp_key.json 존재 여부:", os.path.exists("gcp_key.json"))
+
+
 
 
 
