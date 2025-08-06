@@ -105,4 +105,5 @@ with gr.Blocks() as app:
     gr.Markdown("📌 참여자는 언제든 접속하여 자신이 받은 **최종수익**을 확인할 수 있습니다.")
     gr.Markdown("✅ 아래 스프레드시트 또는 테이블이 자동으로 최신 상태로 유지됩니다.")
 
-app.launch()
+if __name__ == "__main__":
+    app.launch(server_name="0.0.0.0", server_port=10000)
