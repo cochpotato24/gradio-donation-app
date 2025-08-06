@@ -54,4 +54,4 @@ with gr.Blocks() as app:
     btn = gr.Button("기부하기")
     btn.click(donate, inputs=[name, amount], outputs=output)
 
-app.launch()
+app.launch(server_name="0.0.0.0", server_port=10000)
