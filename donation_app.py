@@ -63,5 +63,13 @@ with gr.Blocks() as demo:
     submit_btn.click(fn=donate, inputs=[name, donation_amount], outputs=[result_text, log_view])
 
 # 실행
+app = gr.Interface(
+    fn=main,
+    inputs=[name_input, donation_slider],
+    outputs=[output_text, output_table],
+    title="10,000원 중 얼마를 기부하시겠습니까?",
+    description="응답은 0~10,000 사이 숫자로 입력하세요."
+)
+
 if __name__ == "__main__":
     app.launch(server_name="0.0.0.0", server_port=10000)
