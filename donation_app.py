@@ -12,10 +12,9 @@ CSV_FILE = "donation_log.csv"
 if os.path.exists(CSV_FILE):
     log_df = pd.read_csv(CSV_FILE)
 else:
-    log_df = pd.DataFrame(columns=["이름", "기부액", "수익", "누적수익", "응답시간"])
+    log_df = pd.DataFrame(columns=["이름", "기부액", "개인계정", "공공계정", "최종수익", "응답시간"])
 
-import json 
-# ✅ Google Sheets 인증 (Render 환경 변수 사용)
+# ✅ Google Sheets 인증 (환경변수 또는 로컬 파일 활용)
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/spreadsheets",
@@ -23,13 +22,17 @@ scope = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# 환경 변수로부터 JSON 인증 정보 읽기
-creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-creds_dict = json.loads(creds_json)
+# Render 환경에서는 환경변수에서 JSON을 불러와 처리
+if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
+    import json
+    creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    creds_dict = json.loads(creds_json)
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+else:
+    creds = Credentials.from_service_account_file("service_account.json", scopes=scope)
 
-creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
 client = gspread.authorize(creds)
-sheet = client.open("donation_log").sheet1  # ✅ Google Sheet 문서명 정확히 일치해야 함
+sheet = client.open("donation_log").sheet1
 
 # ✅ Gradio 입력 처리 함수
 def donation_app(name, donation):
@@ -37,32 +40,41 @@ def donation_app(name, donation):
 
     if not name.strip():
         return "❗ 이름을 입력해주세요."
-    if not 0 <= donation <= 1000:
-        return "⚠️ 기부액은 0~1000 사이의 숫자여야 합니다."
+    if not 0 <= donation <= 10000:
+        return "⚠️ 기부액은 0~10,000 사이의 숫자여야 합니다."
 
-    income = donation * 5
+    total_budget = 10000
     time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    prev_total = log_df[log_df["이름"] == name]["수익"].sum()
-    new_total = prev_total + income
 
-    # 새로운 행 추가 (로컬 CSV용)
+    # 새로운 응답 추가 전 기부 총합과 참여자 수 계산을 위해 잠시 추가해 놓음
+    temp_df = pd.concat([log_df, pd.DataFrame([{"이름": name, "기부액": donation}])], ignore_index=True)
+
+    total_donation = temp_df["기부액"].sum()
+    num_participants = temp_df.shape[0]
+
+    public_account = (total_donation * 2) / num_participants
+    private_account = total_budget - donation
+    final_income = private_account + public_account
+
+    # 새로운 행 구성
     new_row = pd.DataFrame([{
         "이름": name,
         "기부액": donation,
-        "수익": income,
-        "누적수익": new_total,
+        "개인계정": private_account,
+        "공공계정": public_account,
+        "최종수익": final_income,
         "응답시간": time_now
     }])
+
     log_df = pd.concat([log_df, new_row], ignore_index=True)
     log_df.to_csv(CSV_FILE, index=False, encoding='utf-8-sig')
 
-    # ✅ Google Sheets에도 저장
     try:
-        sheet.append_row([name, donation, income, new_total, time_now])
+        sheet.append_row([name, donation, private_account, public_account, final_income, time_now])
     except Exception as e:
         print("❌ Google Sheets 저장 실패:", e)
 
-    return f"💰 {name}님, 이번 수익은 {income}만원이며, 누적 수익은 {new_total}만원입니다."
+    return f"💰 {name}님, 당신의 최종수익은 {int(final_income):,}원입니다."
 
 # 로그 확인용 함수
 def show_log():
@@ -72,12 +84,12 @@ def show_log():
 
 # ✅ Gradio UI 구성
 with gr.Blocks() as demo:
-    gr.Markdown("## 💬 1000만원 중 얼마를 기부하시겠습니까?")
-    gr.Markdown("📌 응답은 만원 단위로서 0~1000 사이 숫자로 입력하세요.")
+    gr.Markdown("## 💬 10,000원 중 얼마를 기부하시겠습니까?")
+    gr.Markdown("📌 응답은 0~10,000 사이 숫자로 입력하세요.")
 
     with gr.Row():
         name_input = gr.Textbox(label="이름", placeholder="예: 김철수")
-        donation_slider = gr.Slider(0, 1000, step=1, label="기부액 (만원)")
+        donation_slider = gr.Slider(0, 10000, step=100, label="기부액 (원)")
 
     submit_btn = gr.Button("응답 제출")
     output_text = gr.Textbox(label="결과", lines=2)
