@@ -1,109 +1,78 @@
-import os
-import json
 import gradio as gr
+import pandas as pd
+import gspread
+import json
+import os
+from google.oauth2 import service_account
 from datetime import datetime
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
 
-# 구글 시트 설정
+# Google Sheets 연동 설정
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-SHEET_ID = '여기에_당신의_스프레드시트_ID_입력'
-SHEET_RANGE = 'A2:F'
+SECRET_PATH = '/etc/secrets/service_account.json'  # Render Secret Files 위치
+SPREADSHEET_NAME = 'donation_log'
 
-# 🔑 Secret 파일에서 자격 증명 로드
-JSON_KEYFILE = "/etc/secrets/service_account.json"
-credentials = Credentials.from_service_account_file(JSON_KEYFILE, scopes=SCOPES)
-service = build('sheets', 'v4', credentials=credentials)
-sheet = service.spreadsheets()
+credentials = service_account.Credentials.from_service_account_file(
+    SECRET_PATH, scopes=SCOPES
+)
+gc = gspread.authorize(credentials)
+spreadsheet = gc.open(SPREADSHEET_NAME)
+worksheet = spreadsheet.sheet1
 
-# 참여자 목록 가져오기
-def read_sheet():
-    result = sheet.values().get(spreadsheetId=SHEET_ID, range=SHEET_RANGE).execute()
-    return result.get('values', [])
+MAX_PARTICIPANTS = 3
 
-# 시트에 데이터 추가
-def append_to_sheet(data):
-    sheet.values().append(
-        spreadsheetId=SHEET_ID,
-        range=SHEET_RANGE,
-        valueInputOption='USER_ENTERED',
-        body={'values': [data]}
-    ).execute()
+def get_current_data():
+    data = worksheet.get_all_records()
+    return data
 
-# 참여 처리 함수
-def process_donation(name, amount):
-    amount = int(amount)
-    existing = read_sheet()
+def calculate_income(data):
+    total_private_donation = sum(row['기부액'] for row in data)
+    total_public = total_private_donation * 2
+    per_person_public = total_public / MAX_PARTICIPANTS
+    result = []
+    for row in data:
+        개인수익 = 10000 - row['기부액']
+        최종수익 = 개인수익 + per_person_public
+        result.append({'이름': row['이름'], '기부액': row['기부액'], '최종수익': round(최종수익)})
+    return result
 
-    # 참여 인원 3명 이상이면 입력 차단
-    if len(existing) >= 3:
-        return "참여 인원이 모두 찼습니다. 더 이상 참여할 수 없습니다."
+def donate(name, donation):
+    data = get_current_data()
+    if any(row['이름'] == name for row in data):
+        return f"❌ {name}님은 이미 참여하셨습니다.", pd.DataFrame(data)
+    if len(data) >= MAX_PARTICIPANTS:
+        return "❌ 이미 최대 3명이 참여하여 실험이 종료되었습니다.", pd.DataFrame(data)
 
-    # 응답시간 기록
-    response_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    worksheet.append_row([name, donation, now])
 
-    # 최종 참여자일 경우 계산 시작
-    if len(existing) == 2:  # 이번이 3번째 참여자라면
-        # 기존 참여자 정보
-        names = [row[0] for row in existing]
-        donations = [int(row[1]) for row in existing]
-        total_donation = sum(donations) + amount
-
-        # 공공계정 총합 = 기부총액 * 2
-        public_fund = total_donation * 2
-        shared_fund = public_fund // 3  # 모든 참여자에게 균등하게 배분
-
-        # 기존 참여자 각각 계산 후 업데이트
-        for i, row in enumerate(existing):
-            donor_name = row[0]
-            donor_amount = int(row[1])
-            private_amount = total_donation - donor_amount
-            final_income = private_amount + shared_fund
-            existing[i] = [donor_name, donor_amount, private_amount, shared_fund, final_income, row[5] if len(row) > 5 else '']
-
-        # 마지막 참여자 정보도 계산
-        private_amount = total_donation - amount
-        final_income = private_amount + shared_fund
-        new_row = [name, amount, private_amount, shared_fund, final_income, response_time]
-
-        # 시트 업데이트
-        for i in range(2):
-            sheet.values().update(
-                spreadsheetId=SHEET_ID,
-                range=f"A{2 + i}:F{2 + i}",
-                valueInputOption='USER_ENTERED',
-                body={'values': [existing[i]]}
-            ).execute()
-
-        append_to_sheet(new_row)
-
-        return "✅ 세 번째 참여가 완료되어 모든 참여자의 최종수익이 계산되었습니다. 아래에서 확인하세요."
-
+    updated_data = get_current_data()
+    if len(updated_data) < MAX_PARTICIPANTS:
+        return f"✅ {name}님 참여 완료! 나머지 {MAX_PARTICIPANTS - len(updated_data)}명 대기 중입니다.", pd.DataFrame(updated_data)
     else:
-        # 최종 계산 전까지는 개인계정만 계산하여 기록
-        other_amount = sum([int(row[1]) for row in existing])
-        private_amount = other_amount
-        shared_fund = ""
-        final_income = ""
-        append_to_sheet([name, amount, private_amount, shared_fund, final_income, response_time])
-        return f"☑️ {len(existing)+1}번째 참여 완료! 총 3명이 참여해야 최종 수익이 계산됩니다.\n잠시만 기다려주세요."
+        result_data = calculate_income(updated_data)
+        worksheet.clear()
+        worksheet.append_row(["이름", "기부액", "최종수익", "입력시간"])
+        for r in result_data:
+            worksheet.append_row([r['이름'], r['기부액'], r['최종수익'], now])
+        return "✅ 실험 완료! 아래에서 결과를 확인하세요.", pd.DataFrame(result_data)
 
 # 인터페이스 구성
-with gr.Blocks() as app:
-    gr.Markdown("## 🎁 기부 실험 프로그램")
+with gr.Blocks() as demo:
+    gr.Markdown("🎁 **기부 실험 프로그램**")
     gr.Markdown("아래에 이름과 기부액을 입력하세요. (3명까지 참여 가능)")
 
     with gr.Row():
-        name = gr.Textbox(label="이름", placeholder="예: 김철수")
-        amount = gr.Number(label="기부액", precision=0)
+        name_input = gr.Textbox(label="이름")
+        donation_input = gr.Slider(0, 10000, step=1000, label="10000원 중 얼마를 기부하시겠습니까?")
 
-    output = gr.Textbox(label="결과 안내")
+    result_output = gr.Textbox(label="결과 안내", interactive=False)
+    result_table = gr.Dataframe(headers=["이름", "기부액", "최종수익"], interactive=False)
 
-    submit_btn = gr.Button("참여하기")
-    submit_btn.click(fn=process_donation, inputs=[name, amount], outputs=output)
+    donate_btn = gr.Button("참여하기")
 
-    gr.Markdown("📌 참여자는 언제든 접속하여 자신이 받은 **최종수익**을 확인할 수 있습니다.")
+    donate_btn.click(fn=donate, inputs=[name_input, donation_input], outputs=[result_output, result_table])
+
+    gr.Markdown("📌 참여자는 언제든 접속하여 자신이 받은 최종수익을 확인할 수 있습니다.")
     gr.Markdown("✅ 아래 스프레드시트 또는 테이블이 자동으로 최신 상태로 유지됩니다.")
 
-if __name__ == "__main__":
-    app.launch(server_name="0.0.0.0", server_port=10000)
+demo.launch()
