@@ -1,7 +1,8 @@
 import gradio as gr
 import gspread
-from google.oauth2.service_account import Credentials
+from oauth2client.service_account import ServiceAccountCredentials
 import os
+import gspread
 
 # 인증 설정
 scope = [
@@ -9,13 +10,11 @@ scope = [
     'https://www.googleapis.com/auth/drive',
 ]
 
-creds = Credentials.from_service_account_file(
-    '/etc/secrets/service_account.json',
-    scopes=scope
+credentials = ServiceAccountCredentials.from_json_keyfile_name(
+    '/etc/secrets/service_account.json', scope
 )
 
-)
-gc = gspread.authorize(creds)
+gc = gspread.authorize(credentials)
 
 # 스프레드시트 정보
 SPREADSHEET_NAME = os.environ['SPREADSHEET_NAME']
