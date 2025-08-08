@@ -1,13 +1,14 @@
-import gradio as gr
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import os
 from datetime import datetime
 import pandas as pd
+import gradio as gr
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from gspread.exceptions import WorksheetNotFound
 
-# ─────────────────────────────────────────
-# Google Sheets 인증
-# ─────────────────────────────────────────
+# -----------------------------
+# 1) Google Sheets 인증
+# -----------------------------
 scope = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -17,107 +18,141 @@ credentials = ServiceAccountCredentials.from_json_keyfile_name(
 )
 gc = gspread.authorize(credentials)
 
-# 스프레드시트 & 헤더
 SPREADSHEET_NAME = os.environ["SPREADSHEET_NAME"]
-worksheet = gc.open(SPREADSHEET_NAME).sheet1
-HEADER = ["round", "ID", "기부액", "개인계정", "공공계정", "최종수익", "응답시간"]
-if worksheet.row_values(1) != HEADER:
-    worksheet.insert_row(HEADER, index=1)
+spreadsheet = gc.open(SPREADSHEET_NAME)
+worksheet = spreadsheet.sheet1
 
-# ─────────────────────────────────────────
-# 실험 파라미터
-# ─────────────────────────────────────────
-NUM_PARTICIPANTS = 4     # 라운드당 인원
-TOTAL_ROUNDS = 3         # 총 라운드 수
-AUTO_RESET_ON_FINISH = True  # 모든 라운드 완료 후 다음 입력이 오면 자동 리셋
+HEADER_BASE = ["round", "ID", "기부액", "개인계정", "공공계정", "최종수익", "응답시간"]
+FULL_HEADER = HEADER_BASE + ["세션"]
 
-# ─────────────────────────────────────────
-# 전역 상태
-# ─────────────────────────────────────────
-def _new_state():
-    """라운드별 기부 임시 보관용 상태 초기화"""
-    return {r: [] for r in range(1, TOTAL_ROUNDS + 1)}
+def ensure_headers():
+    header = worksheet.row_values(1)
+    if not header:
+        worksheet.insert_row(FULL_HEADER, index=1)
+        return
+    if "세션" not in header:
+        worksheet.update_cell(1, len(header) + 1, "세션")
+
+ensure_headers()
+
+# -----------------------------
+# 2) 세션 관리 (Meta 시트)
+# -----------------------------
+def get_or_create_meta():
+    try:
+        meta = spreadsheet.worksheet("Meta")
+    except WorksheetNotFound:
+        meta = spreadsheet.add_worksheet(title="Meta", rows=10, cols=2)
+        meta.update("A1", "CURRENT_SESSION")
+        meta.update("B1", datetime.now().strftime("%Y%m%d-%H%M%S"))
+    return meta
+
+meta_ws = get_or_create_meta()
+
+def get_current_session_id():
+    sid = meta_ws.acell("B1").value
+    if not sid:
+        sid = datetime.now().strftime("%Y%m%d-%H%M%S")
+        meta_ws.update("A1:B1", [["CURRENT_SESSION", sid]])
+    return sid
+
+def set_new_session_id():
+    new_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    meta_ws.update("A1:B1", [["CURRENT_SESSION", new_id]])
+    return new_id
+
+SESSION_ID = get_current_session_id()
+
+# -----------------------------
+# 3) 실험 설정 & 상태
+# -----------------------------
+NUM_PARTICIPANTS = 4
+TOTAL_ROUNDS = 3
 
 current_round = 1
-donors_by_round = _new_state()
+donors_by_round = {r: [] for r in range(1, TOTAL_ROUNDS + 1)}
 
-# ─────────────────────────────────────────
-# 유틸
-# ─────────────────────────────────────────
-def get_table_data():
-    """시트 전체를 DataFrame -> list[list]로 반환(그리디오 테이블에 쓰기 용)"""
-    records = worksheet.get_all_records()  # header 기반 dict 리스트
-    if not records:
-        return []
-    df = pd.DataFrame(records)
-    return df.values.tolist()
-
-def reset_state():
-    """새 세션 시작(전역 상태 초기화)"""
-    global current_round, donors_by_round
-    current_round = 1
-    donors_by_round = _new_state()
-
-def latest_session_summary():
-    """
-    '최근 세션'의 라운드별 결과 요약 문자열 생성.
-    - 최근 세션 = 시트의 마지막 (TOTAL_ROUNDS*NUM_PARTICIPANTS) 행 블록
-    - 미완성 세션이면 있는 라운드만 요약
-    """
-    block_size = TOTAL_ROUNDS * NUM_PARTICIPANTS
+# -----------------------------
+# 4) 시트 I/O (현재 세션만)
+# -----------------------------
+def get_table_df():
     records = worksheet.get_all_records()
     if not records:
-        return "아직 기록이 없습니다."
+        return pd.DataFrame(columns=FULL_HEADER)
 
-    # 최근 블록(완성/미완성 포함)
-    last_block = records[-block_size:] if len(records) >= block_size else records[:]
+    df = pd.DataFrame(records)
+    if "세션" not in df.columns:
+        return pd.DataFrame(columns=FULL_HEADER)
 
-    # round별 묶기
-    by_round = {}
-    for row in last_block:
-        r = row.get("round")
-        if isinstance(r, int):
-            by_round.setdefault(r, []).append(row)
+    df = df[df["세션"] == SESSION_ID].copy()
 
-    # 정렬된 라운드 순서로 요약
-    summary = "❤️ 최근 세션 라운드별 최종 기부 결과 ❤️\n"
-    for r in sorted(by_round.keys()):
-        summary += f"\n<{r}라운드>\n"
-        for row in by_round[r]:
-            try:
-                final_earning = int(float(row["최종수익"]))
-            except Exception:
-                final_earning = row["최종수익"]
-            summary += f"{row['ID']}님의 최종수익: {final_earning}원\n"
-    return summary
+    for col in ["round", "기부액", "개인계정", "공공계정", "최종수익"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "응답시간" in df.columns:
+        df["응답시간"] = df["응답시간"].astype(str)
 
-# ─────────────────────────────────────────
-# 핵심 로직
-# ─────────────────────────────────────────
-def donate(user_id, amount):
+    df = df.sort_values(by=["round", "응답시간"], ignore_index=True)
+    return df
+
+def get_table_data():
+    df = get_table_df()
+    if "세션" in df.columns:
+        df = df[HEADER_BASE]
+    return df.values.tolist()
+
+def append_row_for_session(row_values):
+    worksheet.append_row(row_values + [SESSION_ID])
+
+# -----------------------------
+# 5) 시트 → 앱 상태 복구 (앱 시작 시 자동 실행)
+# -----------------------------
+def rebuild_state_from_sheet():
     global current_round, donors_by_round
+    df = get_table_df()
+    donors_by_round = {r: [] for r in range(1, TOTAL_ROUNDS + 1)}
+    current_round = 1
+    if df.empty:
+        return
+    last_round = int(df["round"].max())
+    counts = df.groupby("round")["ID"].count().to_dict()
+    if counts.get(last_round, 0) < NUM_PARTICIPANTS:
+        current_round = last_round
+        sub = df[df["round"] == last_round]
+        for _, row in sub.iterrows():
+            donors_by_round[last_round].append({"ID": row["ID"], "기부액": float(row["기부액"])})
+    else:
+        current_round = last_round + 1 if last_round < TOTAL_ROUNDS else TOTAL_ROUNDS + 1
 
-    # 모든 라운드 완료 상태에서 자동 리셋 옵션이면 새 세션으로 초기화
+rebuild_state_from_sheet()
+
+# -----------------------------
+# 6) 상태 텍스트
+# -----------------------------
+def round_status_text():
+    return "실험 종료" if current_round > TOTAL_ROUNDS else f"현재 {current_round}라운드 참여 중"
+
+def session_status_text():
+    return f"현재 세션: **{SESSION_ID}**"
+
+# -----------------------------
+# 7) 자동 새 세션 시작(완주 후 다음 사용자 진입 시)
+# -----------------------------
+def _auto_start_new_session():
+    global SESSION_ID, current_round, donors_by_round
+    SESSION_ID = set_new_session_id()
+    current_round = 1
+    donors_by_round = {r: [] for r in range(1, TOTAL_ROUNDS + 1)}
+
+# -----------------------------
+# 8) donate (자동 롤링 포함, 동기화 버튼 제거)
+# -----------------------------
+def donate(user_id, amount):
+    global current_round, donors_by_round, SESSION_ID
+
+    # 이전 실험 완주된 상태면 다음 사용자 진입 시 자동 새 세션 시작
     if current_round > TOTAL_ROUNDS:
-        if AUTO_RESET_ON_FINISH:
-            reset_state()
-        else:
-            table = get_table_data()
-            return (
-                "모든 라운드가 완료되었습니다. '🔁 새 실험 시작(Reset)' 버튼으로 새 세션을 시작하세요.",
-                table,
-                "실험 종료",
-            )
-
-    table = get_table_data()
-
-    # ID 중복 방지(해당 라운드에 이미 참여했는지)
-    if any(d["ID"] == user_id for d in donors_by_round[current_round]):
-        return (
-            f"{user_id}님은 이미 {current_round}라운드에 참여하셨습니다.",
-            table,
-            f"현재 {current_round}라운드 참여 중",
-        )
+        _auto_start_new_session()
 
     # 2~N 라운드는 1라운드 참여자만 허용
     if current_round > 1:
@@ -125,84 +160,78 @@ def donate(user_id, amount):
         if user_id not in allowed:
             return (
                 f"{user_id}님은 이 실험의 참여자가 아닙니다. 1라운드 참여자: {', '.join(allowed)}",
-                table,
-                f"현재 {current_round}라운드 참여 중",
+                get_table_data(),
+                round_status_text(),
+                session_status_text(),
             )
 
-    # 기부 저장
+    # 해당 라운드 중복 참여 방지
+    if any(d["ID"] == user_id for d in donors_by_round[current_round]):
+        return (
+            f"{user_id}님은 이미 {current_round}라운드에 참여하셨습니다.",
+            get_table_data(),
+            round_status_text(),
+            session_status_text(),
+        )
+
+    # 임시 저장
     donors_by_round[current_round].append({"ID": user_id, "기부액": amount})
     count = len(donors_by_round[current_round])
 
-    # 참여 대기
     if count < NUM_PARTICIPANTS:
         return (
             f"{user_id}님 기부 감사합니다! 아직 {NUM_PARTICIPANTS - count}명이 남았습니다 (라운드 {current_round}).",
-            table,
-            f"현재 {current_round}라운드 참여 중",
+            get_table_data(),
+            round_status_text(),
+            session_status_text(),
         )
 
-    # 라운드 완료 → 계산 & 시트 기록
+    # 라운드 마감: 계산 및 시트 기록
     total_donation = sum(d["기부액"] for d in donors_by_round[current_round])
     public_account = total_donation * 2
     public_per_person = public_account / NUM_PARTICIPANTS
 
     result_text = f"❤️ {current_round}라운드 최종 기부 결과 ❤️\n"
     for d in donors_by_round[current_round]:
-        personal_account = 10000 - d["기부액"]
-        final_earning = personal_account + public_per_person
-        response_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        worksheet.append_row(
-            [
-                current_round,
-                d["ID"],
-                d["기부액"],
-                personal_account,
-                round(public_per_person, 3),
-                round(final_earning, 3),
-                response_time,
-            ]
-        )
-        result_text += f"{d['ID']}님의 최종수익: {int(final_earning)}원\n"
+        personal = 10000 - d["기부액"]
+        final = personal + public_per_person
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        append_row_for_session([
+            current_round, d["ID"], d["기부액"], personal,
+            round(public_per_person, 3), round(final, 3), ts
+        ])
+        result_text += f"{d['ID']}님의 최종수익: {int(final)}원\n"
 
-    # 다음 라운드로
+    # 다음 라운드 or 완주
     current_round += 1
-    table = get_table_data()
-    if current_round <= TOTAL_ROUNDS:
-        round_msg = f"{current_round}라운드 참여하실 수 있습니다."
-    else:
-        round_msg = "모든 라운드가 완료되었습니다. 다음 입력 시 새 세션을 시작합니다." if AUTO_RESET_ON_FINISH \
-                    else "모든 라운드 완료. 'Reset' 버튼으로 새 세션을 시작하세요."
-
-    return result_text, table, round_msg
+    return result_text, get_table_data(), round_status_text(), session_status_text()
 
 def refresh_results():
+    df = get_table_df()
     table = get_table_data()
-    summary = latest_session_summary()
-    if current_round > TOTAL_ROUNDS:
-        round_msg = "실험 종료(완료됨)"
-    else:
-        round_msg = f"현재 {current_round}라운드 참여 중"
-    return summary, table, round_msg
+    summary = "❤️ 라운드별 최종 기부 결과 (현재 세션) ❤️\n"
+    if not df.empty:
+        for r in sorted(df["round"].unique()):
+            summary += f"\n<{int(r)}라운드>\n"
+            for _, row in df[df["round"] == r].iterrows():
+                summary += f"{row['ID']}님의 최종수익: {int(row['최종수익'])}원\n"
+    return summary, table, round_status_text(), session_status_text()
 
-def reset_experiment():
-    reset_state()
-    table = get_table_data()
-    return "새 세션을 시작했습니다. 1라운드부터 참여하세요.", table, f"현재 {current_round}라운드 참여 중"
-
-# ─────────────────────────────────────────
-# Gradio UI
-# ─────────────────────────────────────────
+# -----------------------------
+# 9) Gradio UI (동기화 버튼 없음)
+# -----------------------------
 with gr.Blocks() as app:
     gr.Markdown("## 🎁 기부 실험\n10000원 중 얼마를 기부하시겠습니까?")
-    current_round_text = gr.Markdown(f"현재 {current_round}라운드 참여 중")
+    current_round_text = gr.Markdown(round_status_text())
+    current_session_text = gr.Markdown(session_status_text())
 
     with gr.Row():
-        user_id = gr.Textbox(label="ID", scale=2)
-        amount = gr.Slider(0, 10000, step=500, label="기부 금액 (₩)", value=0, scale=3)
+        user_id = gr.Textbox(label="ID", placeholder="예: 홍길동")
+        amount = gr.Slider(0, 10000, step=500, label="기부 금액 (₩)", value=0)
 
     output_text = gr.Textbox(label="결과", lines=12)
     table = gr.Dataframe(
-        headers=HEADER,
+        headers=HEADER_BASE,
         datatype=["number", "str", "number", "number", "number", "number", "str"],
         interactive=False,
         row_count=NUM_PARTICIPANTS * TOTAL_ROUNDS,
@@ -211,10 +240,11 @@ with gr.Blocks() as app:
     with gr.Row():
         donate_btn = gr.Button("기부하기", variant="primary")
         refresh_btn = gr.Button("🔄 새로고침하여 결과 보기")
-        reset_btn = gr.Button("🔁 새 실험 시작(Reset)", variant="secondary")
 
-    donate_btn.click(donate, inputs=[user_id, amount], outputs=[output_text, table, current_round_text])
-    refresh_btn.click(refresh_results, outputs=[output_text, table, current_round_text])
-    reset_btn.click(reset_experiment, outputs=[output_text, table, current_round_text])
+    donate_btn.click(donate,
+                     inputs=[user_id, amount],
+                     outputs=[output_text, table, current_round_text, current_session_text])
+    refresh_btn.click(refresh_results,
+                      outputs=[output_text, table, current_round_text, current_session_text])
 
 app.launch(server_name="0.0.0.0", server_port=10000)
