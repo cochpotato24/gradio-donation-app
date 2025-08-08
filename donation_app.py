@@ -31,6 +31,7 @@ def ensure_headers():
         worksheet.insert_row(FULL_HEADER, index=1)
         return
     if "세션" not in header:
+        # 이건 여전히 안전하게 동작합니다.
         worksheet.update_cell(1, len(header) + 1, "세션")
 
 ensure_headers()
@@ -43,8 +44,9 @@ def get_or_create_meta():
         meta = spreadsheet.worksheet("Meta")
     except WorksheetNotFound:
         meta = spreadsheet.add_worksheet(title="Meta", rows=10, cols=2)
-        meta.update("A1", "CURRENT_SESSION")
-        meta.update("B1", datetime.now().strftime("%Y%m%d-%H%M%S"))
+        # *** 변경: update(values=..., range_name=...) 사용 ***
+        meta.update(values=[["CURRENT_SESSION"]], range_name="A1")
+        meta.update(values=[[datetime.now().strftime("%Y%m%d-%H%M%S")]], range_name="B1")
     return meta
 
 meta_ws = get_or_create_meta()
@@ -53,12 +55,14 @@ def get_current_session_id():
     sid = meta_ws.acell("B1").value
     if not sid:
         sid = datetime.now().strftime("%Y%m%d-%H%M%S")
-        meta_ws.update("A1:B1", [["CURRENT_SESSION", sid]])
+        # *** 변경: update(values=..., range_name=...) 사용 ***
+        meta_ws.update(values=[["CURRENT_SESSION", sid]], range_name="A1:B1")
     return sid
 
 def set_new_session_id():
     new_id = datetime.now().strftime("%Y%m%d-%H%M%S")
-    meta_ws.update("A1:B1", [["CURRENT_SESSION", new_id]])
+    # *** 변경: update(values=..., range_name=...) 사용 ***
+    meta_ws.update(values=[["CURRENT_SESSION", new_id]], range_name="A1:B1")
     return new_id
 
 SESSION_ID = get_current_session_id()
@@ -241,10 +245,14 @@ with gr.Blocks() as app:
         donate_btn = gr.Button("기부하기", variant="primary")
         refresh_btn = gr.Button("🔄 새로고침하여 결과 보기")
 
-    donate_btn.click(donate,
-                     inputs=[user_id, amount],
-                     outputs=[output_text, table, current_round_text, current_session_text])
-    refresh_btn.click(refresh_results,
-                      outputs=[output_text, table, current_round_text, current_session_text])
+    donate_btn.click(
+        donate,
+        inputs=[user_id, amount],
+        outputs=[output_text, table, current_round_text, current_session_text],
+    )
+    refresh_btn.click(
+        refresh_results,
+        outputs=[output_text, table, current_round_text, current_session_text],
+    )
 
 app.launch(server_name="0.0.0.0", server_port=10000)
