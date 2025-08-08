@@ -30,28 +30,37 @@ def init_state():
         'donors_by_round': {r: [] for r in range(1, TOTAL_ROUNDS+1)}
     }
 
+# 시트에서 테이블 데이터 가져오기
+def get_table_data():
+    records = worksheet.get_all_records()
+    df = pd.DataFrame(records)
+    return df.values.tolist()
+
 # 실시간 기부 함수
 def donate(user_id, amount, state):
     current_round = state['current_round']
     donors_by_round = state['donors_by_round']
+    table = get_table_data()
 
     # 모든 라운드 완료 시
     if current_round > TOTAL_ROUNDS:
-        return "이미 모든 라운드가 완료되었습니다.", [], f"실험 종료"
+        text = "이미 모든 라운드가 완료되었습니다."
+        round_msg = "실험 종료"
+        return text, table, round_msg, state
 
-    # 라운드 2 이상에서는 1라운드 참여자만 허용
+    # 2라운드 이상 참여자 제한: 1라운드 참가자만
     if current_round > 1:
         allowed = [d['ID'] for d in donors_by_round[1]]
         if user_id not in allowed:
-            return (
-                f"{user_id}님은 해당 실험의 참여자가 아닙니다. 참가자는 {', '.join(allowed)} 입니다.",
-                [],
-                f"현재 {current_round}라운드 참여 중"
-            )
+            text = f"{user_id}님은 해당 실험의 참여자가 아닙니다. 참가자는 {', '.join(allowed)} 입니다."
+            round_msg = f"현재 {current_round}라운드 참여 중"
+            return text, table, round_msg, state
 
     # 중복 ID 방지 (현재 라운드)
     if any(d['ID'] == user_id for d in donors_by_round[current_round]):
-        return f"{user_id}님은 이미 {current_round}라운드에 참여하셨습니다.", [], f"현재 {current_round}라운드 참여 중"
+        text = f"{user_id}님은 이미 {current_round}라운드에 참여하셨습니다."
+        round_msg = f"현재 {current_round}라운드 참여 중"
+        return text, table, round_msg, state
 
     # 기부자 추가
     donors_by_round[current_round].append({'ID': user_id, '기부액': amount})
@@ -59,11 +68,9 @@ def donate(user_id, amount, state):
 
     # 대기 안내
     if count < NUM_PARTICIPANTS:
-        return (
-            f"{user_id}님 기부 감사합니다! 아직 {NUM_PARTICIPANTS - count}명이 남았습니다 (라운드 {current_round}).",
-            [],
-            f"현재 {current_round}라운드 참여 중"
-        )
+        text = f"{user_id}님 기부 감사합니다! 아직 {NUM_PARTICIPANTS - count}명이 남았습니다 (라운드 {current_round})."
+        round_msg = f"현재 {current_round}라운드 참여 중"
+        return text, table, round_msg, state
 
     # 라운드 완료: 계산 및 시트 기록
     total_donation = sum(d['기부액'] for d in donors_by_round[current_round])
@@ -102,7 +109,10 @@ def donate(user_id, amount, state):
 def refresh_results(state):
     records = worksheet.get_all_records()
     if not records:
-        return "아직 기록된 결과가 없습니다.", [], f"현재 {state['current_round']}라운드 참여 중"
+        text = "아직 기록된 결과가 없습니다."
+        table = []
+        round_msg = f"현재 {state['current_round']}라운드 참여 중"
+        return text, table, round_msg
 
     df = pd.DataFrame(records)
     text = "❤️ 라운드별 최종 기부 결과 ❤️\n"
@@ -112,15 +122,9 @@ def refresh_results(state):
         sub = df[df['round'] == r]
         for _, row in sub.iterrows():
             text += f"{row['ID']}님의 최종수익: {int(row['최종수익'])}원\n"
-
     table = get_table_data()
-    return text, table, f"현재 {state['current_round']}라운드 참여 중"
-
-# 시트에서 테이블 데이터 가져오기
-def get_table_data():
-    records = worksheet.get_all_records()
-    df = pd.DataFrame(records)
-    return df.values.tolist()
+    round_msg = f"현재 {state['current_round']}라운드 참여 중"
+    return text, table, round_msg
 
 # Gradio 인터페이스
 with gr.Blocks() as app:
@@ -134,7 +138,7 @@ with gr.Blocks() as app:
         headers=["round","ID","기부액","개인계정","공공계정","최종수익","응답시간"],
         datatype=["number","str","number","number","number","number","str"],
         interactive=False,
-        row_count=NUM_PARTICIPANTS*TOTAL_ROUNDS
+        row_count=NUM_PARTICIPANTS * TOTAL_ROUNDS
     )
 
     donate_btn = gr.Button("기부하기")
