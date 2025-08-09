@@ -31,7 +31,6 @@ def ensure_headers():
         worksheet.insert_row(FULL_HEADER, index=1)
         return
     if "세션" not in header:
-        # 이건 여전히 안전하게 동작합니다.
         worksheet.update_cell(1, len(header) + 1, "세션")
 
 ensure_headers()
@@ -44,7 +43,6 @@ def get_or_create_meta():
         meta = spreadsheet.worksheet("Meta")
     except WorksheetNotFound:
         meta = spreadsheet.add_worksheet(title="Meta", rows=10, cols=2)
-        # *** 변경: update(values=..., range_name=...) 사용 ***
         meta.update(values=[["CURRENT_SESSION"]], range_name="A1")
         meta.update(values=[[datetime.now().strftime("%Y%m%d-%H%M%S")]], range_name="B1")
     return meta
@@ -55,13 +53,11 @@ def get_current_session_id():
     sid = meta_ws.acell("B1").value
     if not sid:
         sid = datetime.now().strftime("%Y%m%d-%H%M%S")
-        # *** 변경: update(values=..., range_name=...) 사용 ***
         meta_ws.update(values=[["CURRENT_SESSION", sid]], range_name="A1:B1")
     return sid
 
 def set_new_session_id():
     new_id = datetime.now().strftime("%Y%m%d-%H%M%S")
-    # *** 변경: update(values=..., range_name=...) 사용 ***
     meta_ws.update(values=[["CURRENT_SESSION", new_id]], range_name="A1:B1")
     return new_id
 
@@ -131,13 +127,10 @@ def rebuild_state_from_sheet():
 rebuild_state_from_sheet()
 
 # -----------------------------
-# 6) 상태 텍스트
+# 6) 상태 텍스트 (세션 ID는 화면에 표시하지 않음)
 # -----------------------------
 def round_status_text():
     return "실험 종료" if current_round > TOTAL_ROUNDS else f"현재 {current_round}라운드 참여 중"
-
-def session_status_text():
-    return f"현재 세션: **{SESSION_ID}**"
 
 # -----------------------------
 # 7) 자동 새 세션 시작(완주 후 다음 사용자 진입 시)
@@ -149,7 +142,7 @@ def _auto_start_new_session():
     donors_by_round = {r: [] for r in range(1, TOTAL_ROUNDS + 1)}
 
 # -----------------------------
-# 8) donate (자동 롤링 포함, 동기화 버튼 제거)
+# 8) donate (자동 롤링 포함)
 # -----------------------------
 def donate(user_id, amount):
     global current_round, donors_by_round, SESSION_ID
@@ -166,7 +159,6 @@ def donate(user_id, amount):
                 f"{user_id}님은 이 실험의 참여자가 아닙니다. 1라운드 참여자: {', '.join(allowed)}",
                 get_table_data(),
                 round_status_text(),
-                session_status_text(),
             )
 
     # 해당 라운드 중복 참여 방지
@@ -175,7 +167,6 @@ def donate(user_id, amount):
             f"{user_id}님은 이미 {current_round}라운드에 참여하셨습니다.",
             get_table_data(),
             round_status_text(),
-            session_status_text(),
         )
 
     # 임시 저장
@@ -187,7 +178,6 @@ def donate(user_id, amount):
             f"{user_id}님 기부 감사합니다! 아직 {NUM_PARTICIPANTS - count}명이 남았습니다 (라운드 {current_round}).",
             get_table_data(),
             round_status_text(),
-            session_status_text(),
         )
 
     # 라운드 마감: 계산 및 시트 기록
@@ -208,7 +198,7 @@ def donate(user_id, amount):
 
     # 다음 라운드 or 완주
     current_round += 1
-    return result_text, get_table_data(), round_status_text(), session_status_text()
+    return result_text, get_table_data(), round_status_text()
 
 def refresh_results():
     df = get_table_df()
@@ -219,15 +209,14 @@ def refresh_results():
             summary += f"\n<{int(r)}라운드>\n"
             for _, row in df[df["round"] == r].iterrows():
                 summary += f"{row['ID']}님의 최종수익: {int(row['최종수익'])}원\n"
-    return summary, table, round_status_text(), session_status_text()
+    return summary, table, round_status_text()
 
 # -----------------------------
-# 9) Gradio UI (동기화 버튼 없음)
+# 9) Gradio UI (세션 ID 표시 제거)
 # -----------------------------
 with gr.Blocks() as app:
     gr.Markdown("## 🎁 기부 실험\n10000원 중 얼마를 기부하시겠습니까?")
     current_round_text = gr.Markdown(round_status_text())
-    current_session_text = gr.Markdown(session_status_text())
 
     with gr.Row():
         user_id = gr.Textbox(label="ID", placeholder="예: 홍길동")
@@ -248,11 +237,11 @@ with gr.Blocks() as app:
     donate_btn.click(
         donate,
         inputs=[user_id, amount],
-        outputs=[output_text, table, current_round_text, current_session_text],
+        outputs=[output_text, table, current_round_text],   # ← 세션 텍스트 제거
     )
     refresh_btn.click(
         refresh_results,
-        outputs=[output_text, table, current_round_text, current_session_text],
+        outputs=[output_text, table, current_round_text],   # ← 세션 텍스트 제거
     )
 
 app.launch(server_name="0.0.0.0", server_port=10000)
